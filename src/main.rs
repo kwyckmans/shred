@@ -1,39 +1,87 @@
-
 // #[derive(Parser)]
 // struct Cli {
 //     pattern: String,
 //     path: std::path::PathBuf,
 // }
 
-
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use std::{io, thread, time::Duration};
-use crossterm::{terminal::{enable_raw_mode, EnterAlternateScreen, disable_raw_mode, LeaveAlternateScreen}, execute, event::{EnableMouseCapture, DisableMouseCapture, self, Event, KeyCode}};
 use tui::{
-    backend::{CrosstermBackend, Backend}, Terminal, widgets::{Block, Borders, Tabs}, Frame, layout::{Direction, Layout, Constraint}, style::{Style, Color, Modifier}, text::{Spans, Span},
+    backend::{Backend, CrosstermBackend},
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Span, Spans},
+    widgets::{Block, Borders, List, ListItem, ListState, Tabs},
+    Frame, Terminal,
 };
 
+struct StatefulList<T> {
+    state: ListState,
+    items: Vec<T>,
+}
+
+impl<T> StatefulList<T> {
+    fn with_items(items: Vec<T>) -> StatefulList<T> {
+        let mut list = StatefulList {
+            state: ListState::default(),
+            items,
+        };
+
+        list.state.select(Some(0));
+
+        list
+    }
+
+    fn next(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i >= self.items.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    fn previous(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.items.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    fn unselect(&mut self) {
+        self.state.select(None);
+    }
+}
+
 struct App<'a> {
-    pub titles: Vec<&'a str>,
-    pub index: usize,
+    items: StatefulList<&'a str>,
 }
 
 impl<'a> App<'a> {
     fn new() -> App<'a> {
         App {
-            titles: vec!["Tab0", "Tab1", "Tab2", "Tab3"],
-            index: 0,
-        }
-    }
-
-    pub fn next(&mut self) {
-        self.index = (self.index + 1) % self.titles.len();
-    }
-
-    pub fn previous(&mut self) {
-        if self.index > 0 {
-            self.index -= 1;
-        } else {
-            self.index = self.titles.len() - 1;
+            items: StatefulList::with_items(vec![
+                "Item0",
+                "Item1",
+                "Item2",
+                "Item3"
+                ]),
         }
     }
 }
@@ -50,9 +98,9 @@ fn main() -> Result<(), io::Error> {
     let app = App::new();
     let res = run_app(&mut terminal, app);
 
-    // restore terminal. Is this after quitting your app? Unsure. 
+    // restore terminal. Is this after quitting your app? Unsure.
     // Totally unclear, but I'm not handling user input yet, so, maybe that'll come later.
-    // TODO: Figure out when in the lifecycle this is supposed to be called, and what happens 
+    // TODO: Figure out when in the lifecycle this is supposed to be called, and what happens
     //  if I don't.
     disable_raw_mode()?;
     execute!(
@@ -69,176 +117,92 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
-fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
+fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     let size = f.size();
 
     let chunks = Layout::default()
-         .direction(Direction::Vertical)
-         .margin(5)
-         .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
-         .split(size);
+        .direction(Direction::Horizontal)
+        .margin(1)
+        .constraints([Constraint::Percentage(10), Constraint::Percentage(90)].as_ref())
+        .split(f.size());
 
-
-    let block = Block::default().style(Style::default().bg(Color::White).fg(Color::Black));
-
-    f.render_widget(block, size);
-    let titles = app
-        .titles
+    let menu_entries: Vec<ListItem> = app
+        .items
+        .items
         .iter()
-        .map(|t| {
-            let (first, rest) = t.split_at(1);
-            Spans::from(vec![
-                Span::styled(first, Style::default().fg(Color::Yellow)),
-                Span::styled(rest, Style::default().fg(Color::Green)),
-            ])
+        .map(|i| {
+            ListItem::new(String::from(*i)).style(Style::default().fg(Color::White))
         })
         .collect();
 
-    let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title("Tabs"))
-        .select(app.index)
-        .style(Style::default().fg(Color::Cyan))
+    let items = List::new(menu_entries)
+        .block(Block::default().borders(Borders::ALL).title("Menu"))
         .highlight_style(
             Style::default()
-                .add_modifier(Modifier::BOLD)
-                .bg(Color::Black),
-        );
+                .bg(Color::White)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ");
 
-    f.render_widget(tabs, chunks[0]);
+    f.render_stateful_widget(items, chunks[0], &mut app.items.state);
 
-    let inner = match app.index {
-        0 => Block::default().title("Inner 0").borders(Borders::ALL),
-        1 => Block::default().title("Inner 1").borders(Borders::ALL),
-        2 => Block::default().title("Inner 2").borders(Borders::ALL),
-        3 => Block::default().title("Inner 3").borders(Borders::ALL),
+    //   ListItem::new(lines).style(Style::default().fg(Color::Black).bg(Color::White))
+
+    //             }
+    //         )
+
+    // let main_menu = List::new(menu_entries);
+
+    // f.render_widget(main_menu, chunks[0]);
+
+    match app.items.state.selected() {
+        Some(0) => draw_first_tab(f, app, chunks[1]),
+        Some(1) => draw_second_tab(f, app, chunks[1]),
+        Some(2) => draw_first_tab(f, app, chunks[1]),
+        Some(3) => draw_second_tab(f, app, chunks[1]),
         _ => unreachable!(),
-    };
-    f.render_widget(inner, chunks[1]);
-    //  let block = Block::default()
-    //       .title("Block 2")
-    //       .borders(Borders::ALL);
-    //  f.render_widget(block, chunks[1]);
- }
+    }
+}
 
-// fn main() -> Result<(), Box<dyn Error>> {    
-//     // let args = Cli::parse();
+fn draw_first_tab<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let chunks = Layout::default()
+        .constraints([Constraint::Percentage(100)].as_ref())
+        .split(area);
 
-//     // let content = std::fs::read_to_string(&args.path);
-//     // let content = match content {
-//     //     Ok(content) => content,
-//     //     Err(error) => {
-//     //         panic!("Could not read provided file {:?}", error)
-//     //     }
-//     // };
+    let block = Block::default()
+        .title("Practice routine")
+        .borders(Borders::ALL);
+    f.render_widget(block, chunks[0]);
+}
 
-//     // for line in content.lines() {
-//     //     if line.contains(&args.pattern) {
-//     //         println!("{}", line)
-//     //     }
-//     // }
+fn draw_second_tab<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let chunks = Layout::default()
+        .constraints([Constraint::Percentage(100)].as_ref())
+        .split(area);
 
-//     enable_raw_mode()?;
-//     let mut stdout = io::stdout();
-//     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-//     let backend = CrosstermBackend::new(stdout);
-//     let mut terminal = Terminal::new(backend)?;
-
-//     // create app and run it
-//     let res = run_app(&mut terminal);
-
-//     // restore terminal
-//     disable_raw_mode()?;
-//     execute!(
-//         terminal.backend_mut(),
-//         LeaveAlternateScreen,
-//         DisableMouseCapture
-//     )?;
-//     terminal.show_cursor()?;
-
-//     if let Err(err) = res {
-//         println!("{:?}", err)
-//     }
-
-//     Ok(())
-// }
+    let block = Block::default().title("Songbook").borders(Borders::ALL);
+    f.render_widget(block, chunks[0]);
+}
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
-        terminal.draw(|f| ui(f, &app))?;
+        terminal.draw(|f| ui(f, &mut app))?;
 
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Char('q') => return Ok(()),
-                KeyCode::Right => app.next(),
-                KeyCode::Left => app.previous(),
+                KeyCode::Left => app.items.unselect(),
+                KeyCode::Down => app.items.next(),
+                KeyCode::Up => app.items.previous(),
                 _ => {}
             }
         }
     }
 }
-
-// fn ui<B: Backend>(f: &mut Frame<B>) {
-//     // Wrapping block for a group
-//     // Just draw the block and the group on the same area and build the group
-//     // with at least a margin of 1
-//     let size = f.size();
-
-//     // Surrounding block
-//     let block = Block::default()
-//         .borders(Borders::ALL)
-//         .title("Main block with round corners")
-//         .title_alignment(Alignment::Center)
-//         .border_type(BorderType::Rounded);
-//     f.render_widget(block, size);
-
-//     let chunks = Layout::default()
-//         .direction(Direction::Vertical)
-//         .margin(4)
-//         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-//         .split(f.size());
-
-//     // Top two inner blocks
-//     let top_chunks = Layout::default()
-//         .direction(Direction::Horizontal)
-//         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-//         .split(chunks[0]);
-
-//     // Top left inner block with green background
-//     let block = Block::default()
-//         .title(vec![
-//             Span::styled("With", Style::default().fg(Color::Yellow)),
-//             Span::from(" background"),
-//         ])
-//         .style(Style::default().bg(Color::Green));
-//     f.render_widget(block, top_chunks[0]);
-
-//     // Top right inner block with styled title aligned to the right
-//     let block = Block::default()
-//         .title(Span::styled(
-//             "Styled title",
-//             Style::default()
-//                 .fg(Color::White)
-//                 .bg(Color::Red)
-//                 .add_modifier(Modifier::BOLD),
-//         ))
-//         .title_alignment(Alignment::Right);
-//     f.render_widget(block, top_chunks[1]);
-
-//     // Bottom two inner blocks
-//     let bottom_chunks = Layout::default()
-//         .direction(Direction::Horizontal)
-//         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-//         .split(chunks[1]);
-
-//     // Bottom left block with all default borders
-//     let block = Block::default().title("With borders").borders(Borders::ALL);
-//     f.render_widget(block, bottom_chunks[0]);
-
-//     // Bottom right block with styled left and right border
-//     let block = Block::default()
-//         .title("With styled borders and doubled borders")
-//         .border_style(Style::default().fg(Color::Cyan))
-//         .borders(Borders::LEFT | Borders::RIGHT)
-//         .border_type(BorderType::Double);
-//     f.render_widget(block, bottom_chunks[1]);
-// }
