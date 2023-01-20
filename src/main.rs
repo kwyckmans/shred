@@ -1,7 +1,7 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, cursor::MoveDown,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use std::io;
 use tui::{
@@ -12,27 +12,39 @@ use tui::{
     Frame, Terminal,
 };
 
-struct StatefulList<T> {
-    state: ListState,
-    items: Vec<T>,
+struct App {
+    help_visible: bool,
 }
 
-impl<T> StatefulList<T> {
-    fn with_items(items: Vec<T>) -> StatefulList<T> {
-        let mut list = StatefulList {
-            state: ListState::default(),
-            items,
-        };
-
-        list.state.select(Some(0));
-
-        list
+impl App {
+    fn new() -> App {
+        App {
+            help_visible: false,
+        }
     }
 
-    fn next(&mut self) {
-        let i = match self.state.selected() {
+    fn toggle_help(&mut self) {
+        self.help_visible = !self.help_visible;
+    }
+}
+
+const MENU_ITEMS: [&str; 4] = ["Practice", "Songbook", "Exercises", "Routines"];
+
+struct UI {
+    menu_state: ListState,
+}
+
+impl UI {
+    fn new() -> UI {
+        UI {
+            menu_state: ListState::default(),
+        }
+    }
+
+    fn select_next_menu_entry(&mut self) {
+        let i = match self.menu_state.selected() {
             Some(i) => {
-                if i >= self.items.len() - 1 {
+                if i >= MENU_ITEMS.len() - 1 {
                     0
                 } else {
                     i + 1
@@ -40,71 +52,27 @@ impl<T> StatefulList<T> {
             }
             None => 0,
         };
-        self.state.select(Some(i));
+        self.menu_state.select(Some(i));
     }
 
-    fn previous(&mut self) {
-        let i = match self.state.selected() {
+    fn select_prev_menu_entry(&mut self) {
+        let i = match self.menu_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.items.len() - 1
+                    MENU_ITEMS.len() - 1
                 } else {
                     i - 1
                 }
             }
             None => 0,
         };
-        self.state.select(Some(i));
+        self.menu_state.select(Some(i));
     }
 
-    fn unselect(&mut self) {
-        self.state.select(None);
-    }
-}
-
-struct App {
-    help_visible: bool,
-    menu_items: Vec<String>,
-}
-
-impl App {
-    fn new() -> App {
-        App {
-            help_visible: false,
-            menu_items: vec![
-                String::from("Practice"),
-                String::from("Songbook"),
-                String::from("Exercises"),
-                String::from("Routines"),
-            ],
-        }
-    }
-
-    fn toggle_help(&mut self) {
-        self.help_visible = !self.help_visible;
-    }
-
-    // fn handle_input(&mut self, key: KeyEvent) -> Result<(), io::Error> {
-    //     match key.code {
-    //         KeyCode::Down => self.ui.select_next_menu_entry(),
-    //         KeyCode::Up => self.ui.select_prev_menu_entry(),
-    //         KeyCode::Char('h') => self.toggle_help(),
-    //         _ => {}
-    //     }
-
-    //     Ok(())
-    // }
-}
-
-const MENU_ITEMS: [&str;4] = ["Practice", "Songbook", "Exercises", "Routines"];
-
-struct Menu<'a> {
-    menu_items: List<'a>,
-    menu_state: ListState,
-}
-
-impl<'a> Menu<'a> {
-    fn new() -> Menu<'a> {
+    fn render_menu<B>(&mut self, f: &mut Frame<B>, area: Rect)
+    where
+        B: Backend,
+    {
         let items: Vec<ListItem> = MENU_ITEMS
             .iter()
             // I'm moving the my menu entries from my StatefulList into ListItems.
@@ -120,89 +88,23 @@ impl<'a> Menu<'a> {
             .map(|i| ListItem::new(*i).style(Style::default().fg(Color::White)))
             .collect();
 
-        // let items =
+        let menu_items = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Menu"))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::White)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            );
 
-        Menu {
-            menu_items: List::new(items),
-            menu_state: ListState::default()
-        }
-        // Menu {
-        //     menu_items: List::new(menu_items)
-        //         .block(Block::default().borders(Borders::ALL).title("Menu"))
-        //         .highlight_style(
-        //             Style::default()
-        //                 .bg(Color::White)
-        //                 .fg(Color::Black)
-        //                 .add_modifier(Modifier::BOLD),
-        //         ),
-        //     menu_state: ListState::default(),
-        // }
+        f.render_stateful_widget(menu_items, area, &mut self.menu_state);
     }
 
-    fn next(&mut self) {
-        let i = match self.menu_state.selected() {
-            Some(i) => {
-                if i >= 4 - 1 {
-                    // if i >= self.menu_state.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.menu_state.select(Some(i));
-    }
-
-    fn previous(&mut self) {
-        let i = match self.menu_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    4 - 1
-                    // self.menu_items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.menu_state.select(Some(i));
-    }
-
-    fn render<B>(self, f: &mut Frame<B>, area: Rect)
+    fn render<B>(&mut self, f: &mut Frame<B>, app: &App)
     where
         B: Backend,
     {
-        // f.render_widget(self.menu_items, area);
-        f.render_stateful_widget(self.menu_items, area, &mut ListState::default());
-    }
-}
-
-
-struct UI<'a> {
-    menu: Menu<'a>,
-}
-
-impl<'a> UI<'a> {
-    fn new(m: Menu<'a>) -> UI<'a> {
-        UI {
-            menu: m,
-        }
-    }
-
-    fn select_next_menu_entry(&mut self) {
-        self.menu.next();
-    }
-
-    fn select_prev_menu_entry(&mut self) {
-        self.menu.previous();
-    }
-
-    fn render<B>(&self, f: &mut Frame<B>, app: &App)
-    where
-        B: Backend,
-    {
-        let menus: Vec<fn(&mut Frame<B>, &App, Rect)> = vec![
+        let menus: Vec<fn(&mut Frame<B>, Rect)> = vec![
             draw_first_tab,
             draw_second_tab,
             draw_first_tab,
@@ -235,23 +137,19 @@ impl<'a> UI<'a> {
 
         // TODO: This is the sole reason app needs to be mutable. Which seem unnecessary, we only
         //   keep this stateful list to highlight a menu, ie fully a visual thing
-        // f.render_stateful_widget(self.menu, chunks[0], &mut self.menu);
 
-        self.menu.render(f, chunks[0]);
-        // match self.menu_items.state.selected() {
-        //     Some(i) => menus[i](f, app, chunks[1]),
-        //     None => draw_first_tab(f, app, chunks[1]),
-        //     _ => unreachable!(),
-        // }
+        self.render_menu(f, chunks[0]);
+
+        // self.menu.render(f, chunks[0]);
+        match self.menu_state.selected() {
+            Some(i) => menus[i](f, chunks[1]),
+            None => draw_first_tab(f, chunks[1]),
+            _ => unreachable!(),
+        }
     }
 }
 
-// fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
-//     // let size = f.size();
-
-// }
-
-fn draw_first_tab<B>(f: &mut Frame<B>, app: &App, area: Rect)
+fn draw_first_tab<B>(f: &mut Frame<B>, area: Rect)
 where
     B: Backend,
 {
@@ -265,7 +163,7 @@ where
     f.render_widget(block, chunks[0]);
 }
 
-fn draw_second_tab<B>(f: &mut Frame<B>, app: &App, area: Rect)
+fn draw_second_tab<B>(f: &mut Frame<B>, area: Rect)
 where
     B: Backend,
 {
@@ -283,11 +181,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, mut ui: UI) -> 
         // TODO: ui should maybe be a struct, instead of just a method? It's getting a tad complicated.
         // TODO: Why is app mutable when passing it to draw? It should be mutable when handling input, but not
         //   when drawing?
-        // terminal.draw(|f| ui.render(f, &app))?;
-        terminal.draw(
 
-            |f| ui.render(f, &app)
-        );
+        let res = terminal.draw(|f| ui.render(f, &app));
         // ui.render(f, &app);
         if let Event::Key(key) = event::read()? {
             match key.code {
@@ -298,12 +193,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App, mut ui: UI) -> 
                 _ => {}
             }
 
-            // let res = app.handle_input(key);
-
-            // match res {
-            //     Ok(_) => continue,
-            //     Err(_) => return Result::Err(res.err().unwrap()),
-            // }
+            match res {
+                Ok(_) => continue,
+                Err(_) => return Result::Err(res.err().unwrap()),
+            }
         }
     }
 }
@@ -319,8 +212,8 @@ fn main() -> Result<(), io::Error> {
     let mut terminal = Terminal::new(backend)?;
 
     let app = App::new();
-    let menu: Menu = Menu::new();
-    let ui = UI::new(menu);
+    // let menu: Menu = Menu::new();
+    let ui = UI::new();
     let res = run_app(&mut terminal, app, ui);
 
     // restore terminal. Is this after quitting your app? Unsure.
